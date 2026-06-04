@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>แอปบันทึกการนอนหลับ (Google Sheets)</title>
+    <style>
+        /* สไตล์ CSS ใช้ของเดิมทั้งหมด */
+        :root {
+            --primary-color: #4A90E2;
+            --bg-color: #F4F7F6;
+            --text-color: #333;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            display: flex;
+            justify-content: center;
+            padding: 2rem;
+            margin: 0;
+        }
+        .container {
+            background: white;
+            padding: 2rem;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            width: 100%;
+            max-width: 500px;
+        }
+        h1 { text-align: center; color: var(--primary-color); margin-bottom: 1.5rem; }
+        .form-group { margin-bottom: 1rem; }
+        label { display: block; margin-bottom: 0.5rem; font-weight: bold; }
+        input {
+            width: 100%; padding: 0.8rem; border: 1px solid #ccc;
+            border-radius: 6px; box-sizing: border-box; font-family: inherit;
+        }
+        button {
+            width: 100%; padding: 1rem; background-color: var(--primary-color);
+            color: white; border: none; border-radius: 6px; font-size: 1rem;
+            font-weight: bold; cursor: pointer; transition: background-color 0.3s;
+        }
+        button:hover { background-color: #357ABD; }
+        button:disabled { background-color: #9cbce0; cursor: not-allowed; }
+        .history { margin-top: 2rem; }
+        table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+        th, td { text-align: left; padding: 0.8rem; border-bottom: 1px solid #eee; }
+        th { background-color: #f8f9fa; }
+        .loading { text-align: center; color: #666; font-style: italic; }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>🌙 บันทึกการนอนหลับ</h1>
+        
+        <form id="sleepForm">
+            <div class="form-group">
+                <label for="date">วันที่ตื่นนอน</label>
+                <input type="date" id="date" required>
+            </div>
+            <div class="form-group">
+                <label for="bedtime">เวลาเข้านอน</label>
+                <input type="time" id="bedtime" required>
+            </div>
+            <div class="form-group">
+                <label for="waketime">เวลาตื่นนอน</label>
+                <input type="time" id="waketime" required>
+            </div>
+            <button type="submit" id="submitBtn">บันทึกข้อมูลลง Google Sheets</button>
+        </form>
+
+        <div class="history">
+            <h2>ประวัติการนอน</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>วันที่</th>
+                        <th>เข้านอน-ตื่น</th>
+                        <th>ระยะเวลา</th>
+                    </tr>
+                </thead>
+                <tbody id="historyTableBody">
+                    <tr><td colspan="3" class="loading">กำลังโหลดข้อมูลจาก Google Sheets...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        // ⚠️ สำคัญมาก: นำ Web App URL ที่ได้จาก Google Apps Script มาใส่ในเครื่องหมายคำพูดด้านล่าง
+        const WEB_APP_URL = 'วาง_WEB_APP_URL_ของคุณที่นี่'; 
+
+        let sleepData = [];
+
+        document.getElementById('date').valueAsDate = new Date();
+
+        function calculateDuration(bedtime, waketime) {
+            let [bedHour, bedMin] = bedtime.split(':').map(Number);
+            let [wakeHour, wakeMin] = waketime.split(':').map(Number);
+            let bedTotalMins = (bedHour * 60) + bedMin;
+            let wakeTotalMins = (wakeHour * 60) + wakeMin;
+
+            if (wakeTotalMins < bedTotalMins) wakeTotalMins += 24 * 60;
+
+            let durationMins = wakeTotalMins - bedTotalMins;
+            let hours = Math.floor(durationMins / 60);
+            let mins = durationMins % 60;
+            return `${hours} ชม. ${mins} นาที`;
+        }
+
+        function renderTable() {
+            const tbody = document.getElementById('historyTableBody');
+            tbody.innerHTML = '';
+
+            if (sleepData.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;">ยังไม่มีข้อมูล</td></tr>';
+                return;
+            }
+
+            // เรียงข้อมูลจากวันที่ล่าสุด (ในกรณีที่อ่านค่ามาจากชีต)
+            const sortedData = [...sleepData].sort((a, b) => new Date(b.date) - new Date(a.date));
+
+            sortedData.forEach(record => {
+                // แปลงรูปแบบวันที่กรณี Google Sheets ส่งมาเป็น Date String
+                let dateStr = record.date;
+                if(dateStr.includes('T')) {
+                    dateStr = dateStr.split('T')[0];
+                }
+
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>${dateStr}</td>
+                    <td>${record.bedtime} - ${record.waketime}</td>
+                    <td>${record.duration}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        // โหลดข้อมูลตอนเปิดหน้าเว็บ
+        async function loadData() {
+            try {
+                // ถ้ายังไม่ได้ใส่ URL ให้ข้ามไป
+                if(WEB_APP_URL === 'วาง_WEB_APP_URL_ของคุณที่นี่') {
+                    document.getElementById('historyTableBody').innerHTML = '<tr><td colspan="3" style="text-align:center; color:red;">กรุณาใส่ Web App URL ในโค้ดก่อน</td></tr>';
+                    return;
+                }
+
+                const response = await fetch(WEB_APP_URL);
+                sleepData = await response.json();
+                renderTable();
+            } catch (error) {
+                console.error('Error fetching data:', error);
+                document.getElementById('historyTableBody').innerHTML = '<tr><td colspan="3" class="loading">ไม่สามารถโหลดข้อมูลได้</td></tr>';
+            }
+        }
+
+        // บันทึกข้อมูล
+        document.getElementById('sleepForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+
+            if(WEB_APP_URL === 'วาง_WEB_APP_URL_ของคุณที่นี่') {
+                alert('กรุณาใส่ Web App URL ในโค้ดก่อนบันทึกข้อมูล');
+                return;
+            }
+
+            const submitBtn = document.getElementById('submitBtn');
+            const date = document.getElementById('date').value;
+            const bedtime = document.getElementById('bedtime').value;
+            const waketime = document.getElementById('waketime').value;
+            const duration = calculateDuration(bedtime, waketime);
+
+            const newRecord = { date, bedtime, waketime, duration };
+
+            // เปลี่ยนสถานะปุ่ม
+            submitBtn.innerText = 'กำลังบันทึก...';
+            submitBtn.disabled = true;
+
+            try {
+                // ส่งข้อมูลไปที่ Google Apps Script
+                await fetch(WEB_APP_URL, {
+                    method: 'POST',
+                    // ใช้ text/plain เพื่อหลีกเลี่ยงปัญหา CORS Preflight ใน Google Apps Script
+                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                    body: JSON.stringify(newRecord)
+                });
+
+                // อัปเดตข้อมูลบนหน้าจอ
+                sleepData.push(newRecord);
+                renderTable();
+                
+                // เคลียร์ค่าในฟอร์ม
+                document.getElementById('bedtime').value = '';
+                document.getElementById('waketime').value = '';
+            } catch (error) {
+                alert('เกิดข้อผิดพลาดในการบันทึกข้อมูล: ' + error.message);
+            } finally {
+                // คืนค่าปุ่มกลับมา
+                submitBtn.innerText = 'บันทึกข้อมูลลง Google Sheets';
+                submitBtn.disabled = false;
+            }
+        });
+
+        // เริ่มโหลดข้อมูลทันทีที่เว็บรัน
+        loadData();
+    </script>
+</body>
+</html>
